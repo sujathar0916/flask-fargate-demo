@@ -1,54 +1,62 @@
-name: CI/CD - Deploy to ECS Fargate
+name: Deploy to ECS
 
 on:
   push:
-    branches:
-      - main
-
-env:
-  AWS_REGION: ap-south-1
-  ECR_REGISTRY: 801429474565.dkr.ecr.ap-south-1.amazonaws.com
-  ECR_REPOSITORY: flask-fargateproject
-  IMAGE_TAG: ${{ github.sha }}
+    branches: [ "main" ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+    # --------------------------
+    # Login to AWS
+    # --------------------------
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-region: ap-south-1
+        role-to-assume: arn:aws:iam::801429474565:role/ecsTaskExecutionRole
+        role-session-name: github-actions
 
-      - name: Log in to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
+    # --------------------------
+    # Login to Amazon ECR
+    # --------------------------
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+    # --------------------------
+    # Build & Push Docker Image
+    # --------------------------
+    - name: Build, tag, push image
+      env:
+        ECR_REGISTRY: 801429474565.dkr.ecr.ap-south-1.amazonaws.com
+        ECR_REPOSITORY: flask-fargateproject
+        IMAGE_TAG: latest
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-      - name: Render New Task Definition
-        id: render-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: flask
-          image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+    # --------------------------
+    # Render Task Definition
+    # --------------------------
+    - name: Render Amazon ECS task definition
+      id: render-task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition.json
+        container-name: flask
+        image: 801429474565.dkr.ecr.ap-south-1.amazonaws.com/flask-fargateproject:latest
 
-      - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          cluster: flask-cluster
-          service: flask-service
-          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
-          wait-for-service-stability: true
+    # --------------------------
+    # Deploy to ECS Fargate
+    # --------------------------
+    - name: Deploy Amazon ECS task definition
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+        cluster: flask-cluster
+        service: flask-task-service
